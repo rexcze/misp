@@ -39,9 +39,6 @@ file_env 'PROXY_PASSWORD'
 file_env 'ZEROMQ_USERNAME'
 file_env 'ZEROMQ_PASSWORD'
 
-# Change volumes permission to apache user
-chown apache:apache /var/www/MISP/app/{attachments,tmp/logs,files/certs,files/img/orgs,files/img/custom}
-
 if [ "$1" = 'supervisord' ]; then
     BUILD_DATE=$(cat /build-date)
     echo "======================================"
@@ -52,45 +49,32 @@ if [ "$1" = 'supervisord' ]; then
 
     misp_create_configs.py
 
-    update-crypto-policies
-
     # Create tmp directory for cake cache
     mkdir -p -m 770 /tmp/cake/
-    chown apache:apache /tmp/cake/
-
-    # Make config files not readable by others
-    chown root:apache /var/www/MISP/app/Config/{config.php,database.php,email.php}
-    chmod 440 /var/www/MISP/app/Config/{config.php,database.php,email.php}
 
     # Check syntax errors in generated config files
-    su-exec apache php -n -l /var/www/MISP/app/Config/config.php
-    su-exec apache php -n -l /var/www/MISP/app/Config/database.php
-    su-exec apache php -n -l /var/www/MISP/app/Config/email.php
+    php -n -l /var/www/MISP/app/Config/config.php
+    php -n -l /var/www/MISP/app/Config/database.php
+    php -n -l /var/www/MISP/app/Config/email.php
 
     # Create symlinks to images from customisation
-    su-exec apache misp_image_symlinks.py
+    misp_image_symlinks.py
 
     # Check if all permissions are OK
-    su-exec apache misp_check_permissions.py
-
-    # Check syntax of Apache2 configs
-    httpd -t
-
-    # Check syntax of PHP-FPM config
-    php-fpm --test
+    misp_check_permissions.py
 
     # Create database schema and check if database is ready
-    su-exec apache misp_create_database.py "$MYSQL_HOST" "$MYSQL_LOGIN" "$MYSQL_DATABASE" /var/www/MISP/INSTALL/MYSQL.sql
+    misp_create_database.py "$MYSQL_HOST" "$MYSQL_LOGIN" "$MYSQL_DATABASE" /var/www/MISP/INSTALL/MYSQL.sql
 
     # Check if redis is listening and running
-    su-exec apache misp_redis_ready.py
+    misp_redis_ready.py
 
     # Update database to latest version
-    su-exec apache /var/www/MISP/app/Console/cake Admin runUpdates || true
+    /var/www/MISP/app/Console/cake Admin runUpdates || true
 
     # Checks if encryption key is valid if set, but continue even if not valid
     if [[ -n $SECURITY_ENCRYPTION_KEY ]]; then
-      su-exec apache /var/www/MISP/app/Console/cake Admin isEncryptionKeyValid || true
+      /var/www/MISP/app/Console/cake Admin isEncryptionKeyValid || true
     fi
 
     # Precompress some CSS and JavaScript files by brotli
@@ -98,17 +82,15 @@ if [ "$1" = 'supervisord' ]; then
     brotli -f /var/www/MISP/app/webroot/js/{jquery,jquery-ui.min,chosen.jquery.min,bootstrap,bootstrap-datepicker,misp,vis}.js
 
     # Update all data stored in JSONs like objects, warninglists etc.
-    nice su-exec apache /var/www/MISP/app/Console/cake Admin updateJSON &
+    nice /var/www/MISP/app/Console/cake Admin updateJSON &
 fi
 
 # Create GPG homedir under apache user
-chown -R apache:apache /var/www/MISP/.gnupg
-chmod 700 /var/www/MISP/.gnupg
-su-exec apache gpg --homedir /var/www/MISP/.gnupg --list-keys
+gpg --homedir /var/www/MISP/.gnupg --list-keys
 
 if [ -n "${GNUPG_PRIVATE_KEY}" -a -n "${GNUPG_PRIVATE_KEY_PASSWORD}" ]; then
     # Import private key
-    su-exec apache gpg --homedir /var/www/MISP/.gnupg --import --batch \
+    gpg --homedir /var/www/MISP/.gnupg --import --batch \
         --passphrase "${GNUPG_PRIVATE_KEY_PASSWORD}" <<< "${GNUPG_PRIVATE_KEY}"
 fi
 
